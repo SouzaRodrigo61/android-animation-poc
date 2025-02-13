@@ -47,6 +47,21 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
 import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.with
+import androidx.compose.animation.core.LinearEasing
 
 /**
  * Tela principal replicando o AppleMusicScreen do Flutter.
@@ -254,6 +269,7 @@ fun AboutView() {
  * alternando entre os estados "mini" e "expandido", além de atualizar a transformação da janela
  * e a cor da barre de navegação do sistema (via Accompanist).
  */
+@OptIn(ExperimentalSharedTransitionApi::class, ExperimentalAnimationApi::class)
 @Composable
 fun ExpandablePlayer(
     isExpanded: Boolean,
@@ -292,7 +308,6 @@ fun ExpandablePlayer(
     val backgroundColor = MaterialTheme.colorScheme.background
 
     SideEffect {
-        Log.d("ExpandablePlayer", "isExpanded: $isExpanded, isDragging: $isDragging")
         if (isDragging) {
             systemUiController.setStatusBarColor(color = Color.Black)
             systemUiController.setNavigationBarColor(color = Color.Black)
@@ -324,16 +339,12 @@ fun ExpandablePlayer(
             .draggable(
                 orientation = Orientation.Vertical,
                 state = rememberDraggableState { dragAmount ->
-                    // Envolve a chamada a 'snapTo' dentro de uma coroutine
                     coroutineScope.launch {
                         if (isExpanded) {
-                            // Em modo expandido, permitimos somente valores positivos (arrastar para baixo)
                             offsetY.snapTo((offsetY.value + dragAmount).coerceAtLeast(0f))
-                            // Atualiza o progresso da transformação da janela
                             val progress = (offsetY.value / screenHeightPx).coerceIn(0f, 0.1f)
                             onResizeWindow(progress)
                         } else {
-                            // No modo mini, permitimos somente valores negativos (arrastar para cima)
                             offsetY.snapTo((offsetY.value + dragAmount).coerceAtMost(0f))
                         }
                     }
@@ -345,26 +356,33 @@ fun ExpandablePlayer(
                 onDragStopped = { velocity ->
                     isDragging = false
                     if (isExpanded) {
-                        // Se o usuário arrastou para baixo além de 30% da altura da tela, fecha o player
                         if (offsetY.value > screenHeightPx * 0.3f) {
                             onExpandedChange(false)
                             coroutineScope.launch {
-                                offsetY.animateTo(0f, animationSpec = tween(durationMillis = 300))
+                                offsetY.animateTo(0f, animationSpec = spring(
+                                    stiffness = Spring.StiffnessLow,
+                                    dampingRatio = Spring.DampingRatioNoBouncy
+                                ))
                             }
                             onResetWindow()
                         } else {
                             coroutineScope.launch {
-                                offsetY.animateTo(0f, animationSpec = tween(durationMillis = 300))
+                                offsetY.animateTo(0f, animationSpec = spring(
+                                    stiffness = Spring.StiffnessLow,
+                                    dampingRatio = Spring.DampingRatioNoBouncy
+                                ))
                             }
                             onResizeWindow(0f)
                         }
                     } else {
-                        // No modo mini, se o usuário arrastar para cima além de 50 pixels, expande o player
                         if (offsetY.value < -50f) {
                             onExpandedChange(true)
                         } else {
                             coroutineScope.launch {
-                                offsetY.animateTo(0f, animationSpec = tween(durationMillis = 300))
+                                offsetY.animateTo(0f, animationSpec = spring(
+                                    stiffness = Spring.StiffnessLow,
+                                    dampingRatio = Spring.DampingRatioNoBouncy
+                                ))
                             }
                         }
                     }
@@ -376,36 +394,71 @@ fun ExpandablePlayer(
                 shape = currentShape
             )
     ) {
-        // Alterna entre a versão mini e expandida com o Crossfade
-        Crossfade(targetState = isExpanded) { expanded ->
-            if (expanded) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    // Fundo com gradiente no modo expandido
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                brush = Brush.verticalGradient(
-                                    colors = listOf(Color(0xFF42A5F5), Color(0xFF3F51B5))
+        // Para melhorar a fluidez na transição entre MiniPlayer e ExpandedPlayer,
+        // usamos uma transição customizada no AnimatedContent.
+        SharedTransitionLayout {
+            AnimatedContent(
+                targetState = isExpanded,
+                transitionSpec = {
+                    if (targetState) {
+                        // Transição de MiniPlayer para ExpandedPlayer (movimento linear)
+                        slideInVertically(
+                            initialOffsetY = { fullHeight -> fullHeight },
+                            animationSpec = tween(durationMillis = 300, easing = LinearEasing)
+                        ) with slideOutVertically(
+                            targetOffsetY = { fullHeight -> -fullHeight },
+                            animationSpec = tween(durationMillis = 300, easing = LinearEasing)
+                        ) using SizeTransform(clip = false)
+                    } else {
+                        // Transição de ExpandedPlayer para MiniPlayer (movimento linear)
+                        slideInVertically(
+                            initialOffsetY = { fullHeight -> -fullHeight },
+                            animationSpec = tween(durationMillis = 300, easing = LinearEasing)
+                        ) with slideOutVertically(
+                            targetOffsetY = { fullHeight -> fullHeight },
+                            animationSpec = tween(durationMillis = 300, easing = LinearEasing)
+                        ) using SizeTransform(clip = false)
+                    }
+                },
+                label = "player_transition"
+            ) { targetExpanded ->
+                if (targetExpanded) {
+                    // Conteúdo do ExpandedPlayer
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        // Fundo com gradiente no estado expandido e indicador (capsule) no topo
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(Color(0xFF42A5F5), Color(0xFF3F51B5))
+                                    )
                                 )
-                            )
+                        )
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 12.dp)
+                                .width(35.dp)
+                                .height(5.dp)
+                                .background(color = Color.Black, shape = RoundedCornerShape(2.dp))
+                        )
+                        ExpandedPlayer(
+                            topPadding = WindowInsets.systemBars.asPaddingValues().calculateTopPadding(),
+                            animatedVisibilityScope = this@AnimatedContent,
+                            sharedTransitionScope = this@SharedTransitionLayout
+                        )
+                    }
+                } else {
+                    // Conteúdo do MiniPlayer
+                    MiniPlayer(
+                        animatedVisibilityScope = this@AnimatedContent,
+                        sharedTransitionScope = this@SharedTransitionLayout
                     )
-                    // Indicador (capsule) no topo
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 12.dp)
-                            .width(35.dp)
-                            .height(5.dp)
-                            .background(color = Color.Black, shape = RoundedCornerShape(2.dp))
-                    )
-                    ExpandedPlayer(topPadding = WindowInsets.systemBars.asPaddingValues().calculateTopPadding())
                 }
-            } else {
-                MiniPlayer()
             }
         }
-        // Detecta tap para expandir quando estiver em modo mini
+        // Detecta tap para expandir quando em modo mini
         if (!isExpanded) {
             Box(
                 modifier = Modifier
@@ -419,8 +472,12 @@ fun ExpandablePlayer(
 /**
  * Visualização do MiniPlayer, com imagem (simulada), título e botões.
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-fun MiniPlayer() {
+fun MiniPlayer(
+    animatedVisibilityScope: AnimatedVisibilityScope,
+    sharedTransitionScope: SharedTransitionScope
+) {
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = Color.White,
@@ -431,15 +488,27 @@ fun MiniPlayer() {
         Row(
             modifier = Modifier
                 .fillMaxSize()
+                
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Simula a artwork com efeito similar ao Hero
             Box(
                 modifier = Modifier
                     .size(45.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(Color.Blue)
+                    // .sharedElement(
+                    //     key = "artwork",
+                    //     animatedVisibilityScope = animatedVisibilityScope,
+                    //     sharedTransitionScope = sharedTransitionScope,
+                    //     boundsTransform = { initialBounds, targetBounds ->
+                    //         keyframes {
+                    //             durationMillis = 300
+                    //             initialBounds at 0
+                    //             targetBounds at 300
+                    //         }
+                    //     }
+                    // )
             ) {
                 Icon(
                     imageVector = Icons.Default.Info,
@@ -464,8 +533,13 @@ fun MiniPlayer() {
 /**
  * Visualização do ExpandedPlayer com a artwork, informações da música e botões de ações.
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-fun ExpandedPlayer(topPadding: Dp) {
+fun ExpandedPlayer(
+    topPadding: Dp,
+    animatedVisibilityScope: AnimatedVisibilityScope,
+    sharedTransitionScope: SharedTransitionScope
+) {
     Column(
         modifier = Modifier
             .verticalScroll(rememberScrollState())
@@ -477,12 +551,24 @@ fun ExpandedPlayer(topPadding: Dp) {
             )
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // Artwork com efeito similar ao Hero
+            // Aplica o sharedElement na artwork com o mesmo key ("artwork")
             Box(
                 modifier = Modifier
                     .size(80.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(Color.Blue)
+                    // .sharedElement(
+                    //     key = "artwork",
+                    //     animatedVisibilityScope = animatedVisibilityScope,
+                    //     sharedTransitionScope = sharedTransitionScope,
+                    //     boundsTransform = { initialBounds, targetBounds ->
+                    //         keyframes {
+                    //             durationMillis = 300
+                    //             initialBounds at 0
+                    //             targetBounds at 300
+                    //         }
+                    //     }
+                    // )
             ) {
                 Icon(
                     imageVector = Icons.Default.Info,

@@ -69,5 +69,11 @@ dependencies {
     debugImplementation(compose.uiTooling)
 
     implementation("com.google.accompanist:accompanist-systemuicontroller:0.28.0")
+    implementation("androidx.compose.animation:animation:1.7.7")
+
+    val nav_version = "2.8.6"
+
+    implementation("androidx.navigation:navigation-compose:$nav_version")
+    
 }
 
